@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
+<title>Научный помощник — авторизация</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;background:#f3f5f7;color:#21313b;padding:24px}
+main{max-width:620px;margin:auto;background:#fff;padding:28px;border:1px solid #dee4e7;border-radius:14px}
+h1{font-size:23px}input{box-sizing:border-box;width:100%;padding:12px;margin:8px 0;font-size:16px;border:1px solid #aaa;border-radius:8px}
+button{border:0;border-radius:7px;background:#176b4c;color:white;padding:12px 18px;margin:7px 8px 7px 0;cursor:pointer}
+button:disabled{opacity:.5}#login,#consent{display:none}#status{white-space:pre-wrap;overflow-wrap:anywhere}
+small{color:#52636c}.details{background:#f3f5f7;padding:12px;border-radius:7px;overflow-wrap:anywhere}
+</style></head><body><main>
+<h1>Научный помощник — валидатор</h1>
+<p>ChatGPT запрашивает разрешение вызывать программу проверки научных исследований. Проверьте сведения о приложении и адрес возврата.</p>
+<p id="status" role="status">Проверка авторизации…</p>
+<section id="login"><label for="email">Электронная почта для входа в Supabase Auth</label>
+<input id="email" type="email" autocomplete="email" placeholder="Ваш e-mail"><button id="send">Получить ссылку для входа</button>
+<p><small>Это отдельный вход в приложение, а не в панель Supabase. Ссылка придёт на вашу почту.</small></p></section>
+<section id="consent"><div class="details">
+<p><b>Приложение:</b> <span id="client"></span></p>
+<p><b>Адрес возврата:</b> <span id="redirect"></span></p>
+<p><b>Запрашиваемые разрешения:</b> <span id="scope"></span></p>
+</div><button id="allow">Разрешить</button><button id="deny">Отклонить</button></section>
+<p><small>Не вводите на этой странице Client Secret, API-ключи и другие секреты. Научные материалы здесь не хранятся.</small></p>
+</main>
+<script type="module">
+import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
+const supabase=createClient('https://uvutobuxpqdkloltvswa.supabase.co','sb_publishable_HaaRHByXLMG1yT9fU71VHQ_MiwfQRCu',{auth:{persistSession:true,detectSessionInUrl:true}});
+const el=id=>document.getElementById(id);
+const show=t=>el('status').textContent=t;
+const authId=new URLSearchParams(location.search).get('authorization_id');
+function safeRedirect(value){
+  try{const u=new URL(value);return u.origin==='https://chatgpt.com'&&(/^\/connector\/oauth\/[A-Za-z0-9_-]+\/?$/.test(u.pathname)||u.pathname==='/connector_platform_oauth_redirect');}
+  catch{return false;}
+}
+function returnToChatGPT(url){if(!safeRedirect(url)){show('Отклонено: адрес возврата не принадлежит ChatGPT.');return;}location.assign(url);}
+async function init(){
+  if(!authId){show('Не указан authorization_id. Начните подключение из ChatGPT.');return;}
+  const {data:{user}}=await supabase.auth.getUser();
+  if(!user){show('Для разрешения доступа войдите через ссылку, полученную по электронной почте.');el('login').style.display='block';return;}
+  const {data,error}=await supabase.auth.oauth.getAuthorizationDetails(authId);
+  if(error||!data){show('Ошибка получения данных OAuth: '+(error?.message||'нет ответа'));return;}
+  if(data.redirect_url){returnToChatGPT(data.redirect_url);return;}
+  if(!safeRedirect(data.redirect_uri)){show('Отклонено: неправильный адрес возврата.');return;}
+  el('client').textContent=data.client?.name||'Неизвестное приложение';
+  el('redirect').textContent=data.redirect_uri;
+  el('scope').textContent=data.scope||'Доступ к валидатору';
+  el('consent').style.display='block';
+  show('Проверьте разрешения и подтвердите решение.');
+}
+el('send').onclick=async()=>{
+  const email=el('email').value.trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){show('Введите корректный e-mail.');return;}
+  el('send').disabled=true;
+  try{const {error}=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:location.href}});
+    show(error?'Ошибка входа: '+error.message:'Ссылка отправлена на вашу почту. Откройте письмо в этом браузере.');
+  }catch(e){show(String(e));}finally{el('send').disabled=false;}
+};
+for(const action of ['allow','deny'])el(action).onclick=async()=>{
+  el('allow').disabled=true;el('deny').disabled=true;
+  try{
+    const {data,error}=action==='allow'?await supabase.auth.oauth.approveAuthorization(authId):await supabase.auth.oauth.denyAuthorization(authId);
+    if(error||!data?.redirect_url){show('Ошибка OAuth: '+(error?.message||'отсутствует адрес возврата'));return;}
+    returnToChatGPT(data.redirect_url);
+  }catch(e){show(String(e));}finally{el('allow').disabled=false;el('deny').disabled=false;}
+};
+init().catch(e=>show('Ошибка запуска: '+String(e)));
+</script></body></html>
